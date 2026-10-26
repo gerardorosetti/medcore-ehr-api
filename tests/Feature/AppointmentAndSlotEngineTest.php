@@ -11,6 +11,8 @@ use App\Models\PatientProfile;
 use App\Models\User;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
@@ -119,8 +121,12 @@ it('schedules appointments, sanitizes reason via pipe operator, pushes notificat
 
     $appointment = Appointment::query()->where('doctor_profile_id', $doctor->id)->firstOrFail();
 
-    // Verify PHP 8.5 pipe operator sanitized HTML tags & normalized whitespace
-    expect($appointment->reason)->toBe('Severe chest pain')
+    // Verify PHP 8.5 pipe operator sanitized HTML tags & normalized whitespace, and raw DB stores AES-256 ciphertext
+    $rawAppointment = DB::table('appointments')->where('id', $appointment->id)->first();
+    expect($rawAppointment)->not->toBeNull()
+        ->and($rawAppointment->reason)->not->toContain('Severe chest pain')
+        ->and($rawAppointment->notes)->not->toContain('Urgent evaluation requested')
+        ->and($appointment->reason)->toBe('Severe chest pain')
         ->and($appointment->notes)->toBe('Urgent evaluation requested');
 
     // Verify async notification job queued
@@ -243,4 +249,62 @@ it('enforces column identifier allowlists to defend against SQL injection on que
     $this->getJson('/api/v1/doctors?sort_by=malicious_column')
         ->assertStatus(422)
         ->assertJsonValidationErrors(['sort_by']);
+});
+
+it('enforces database-level partial unique index against race-condition double-booking while allowing rebooking after cancellation', function (): void {
+    $patientA = User::factory()->create();
+    $patientA->assignRole('patient');
+    $profileA = PatientProfile::factory()->create(['user_id' => $patientA->id]);
+
+    $patientB = User::factory()->create();
+    $patientB->assignRole('patient');
+    $profileB = PatientProfile::factory()->create(['user_id' => $patientB->id]);
+
+    $doctorUser = User::factory()->create();
+    $doctorUser->assignRole('doctor');
+    $doctor = DoctorProfile::factory()->create([
+        'user_id' => $doctorUser->id,
+        'consultation_duration_minutes' => 30,
+        'is_accepting_patients' => true,
+    ]);
+
+    $slotStart = CarbonImmutable::now()->next(Carbon::FRIDAY)->setTime(11, 0, 0);
+    $slotEnd = $slotStart->addMinutes(30);
+
+    $firstAppointment = Appointment::create([
+        'patient_profile_id' => $profileA->id,
+        'doctor_profile_id' => $doctor->id,
+        'scheduled_at' => $slotStart,
+        'ends_at' => $slotEnd,
+        'status' => AppointmentStatus::Confirmed,
+        'reason' => 'Initial slot lock',
+    ]);
+
+    // Simulate a concurrent race condition bypassing application-level checks and hitting the DB partial unique index directly.
+    // Wrapped in DB::transaction() so PostgreSQL uses a SAVEPOINT and keeps the outer RefreshDatabase transaction healthy.
+    expect(fn () => DB::transaction(fn () => Appointment::create([
+        'patient_profile_id' => $profileB->id,
+        'doctor_profile_id' => $doctor->id,
+        'scheduled_at' => $slotStart,
+        'ends_at' => $slotEnd,
+        'status' => AppointmentStatus::Confirmed,
+        'reason' => 'Concurrent race insert',
+    ])))->toThrow(UniqueConstraintViolationException::class);
+
+    // Once the first appointment is cancelled, the partial unique index (WHERE status IN ('pending', 'confirmed')) permits rebooking
+    $firstAppointment->update([
+        'status' => AppointmentStatus::Cancelled,
+        'cancellation_reason' => 'Patient rescheduled',
+    ]);
+
+    $rebooked = Appointment::create([
+        'patient_profile_id' => $profileB->id,
+        'doctor_profile_id' => $doctor->id,
+        'scheduled_at' => $slotStart,
+        'ends_at' => $slotEnd,
+        'status' => AppointmentStatus::Confirmed,
+        'reason' => 'Rebooked after cancellation',
+    ]);
+
+    expect($rebooked->id)->not->toBeEmpty();
 });

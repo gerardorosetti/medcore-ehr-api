@@ -125,29 +125,29 @@ it('atomically completes consultations with encrypted PHI at rest and writes pre
     // Assert appointment transitioned to Completed
     expect($appointment->fresh()->status)->toBe(AppointmentStatus::Completed);
 
-    // Assert 2 prescriptions created in database
+    // Assert 2 prescriptions created in database and encrypted at rest
     $this->assertDatabaseCount('prescriptions', 2);
-    $this->assertDatabaseHas('prescriptions', [
-        'medical_record_id' => $recordId,
-        'medication_name' => 'Aspirin Chewable',
-    ]);
-    $this->assertDatabaseHas('prescriptions', [
-        'medical_record_id' => $recordId,
-        'medication_name' => 'Ticagrelor',
-    ]);
+    $rawPrescriptions = DB::table('prescriptions')->where('medical_record_id', $recordId)->get();
+    expect($rawPrescriptions)->toHaveCount(2)
+        ->and($rawPrescriptions[0]->medication_name)->not->toContain('Aspirin')
+        ->and($rawPrescriptions[0]->dosage)->not->toContain('325mg')
+        ->and($rawPrescriptions[0]->instructions)->not->toContain('Chew thoroughly');
 
-    // Assert raw DB ciphertext at rest (AES-256 Eloquent encrypted cast)
+    // Assert raw DB ciphertext at rest (AES-256 Eloquent encrypted cast including vital_signs)
     $rawRecord = DB::table('medical_records')->where('id', $recordId)->first();
     expect($rawRecord)->not->toBeNull()
         ->and($rawRecord->diagnosis)->not->toContain('Acute coronary syndrome')
         ->and($rawRecord->clinical_notes)->not->toContain('crushing sub-sternal')
-        ->and($rawRecord->treatment_plan)->not->toContain('catheterization');
+        ->and($rawRecord->treatment_plan)->not->toContain('catheterization')
+        ->and((string) $rawRecord->vital_signs)->not->toContain('165/95');
 
-    // Assert transparent Eloquent model decryption
-    $decryptedRecord = MedicalRecord::query()->findOrFail($recordId);
+    // Assert transparent Eloquent model decryption for both MedicalRecord and Prescriptions
+    $decryptedRecord = MedicalRecord::query()->with('prescriptions')->findOrFail($recordId);
     expect($decryptedRecord->diagnosis)->toBe('Acute coronary syndrome with ST-elevation myocardial infarction')
         ->and($decryptedRecord->clinical_notes)->toBe($payload['clinical_notes'])
-        ->and($decryptedRecord->treatment_plan)->toBe($payload['treatment_plan']);
+        ->and($decryptedRecord->treatment_plan)->toBe($payload['treatment_plan'])
+        ->and($decryptedRecord->vital_signs)->toBe($payload['vital_signs'])
+        ->and($decryptedRecord->prescriptions->pluck('medication_name')->all())->toBe(['Aspirin Chewable', 'Ticagrelor']);
 });
 
 it('rejects unauthorized clinical consultation recording by unassigned doctors or patients with 403', function (): void {
@@ -209,17 +209,50 @@ it('audits authorized PHI inspection and restricts HIPAA compliance audit logs t
         'doctor_profile_id' => $doctorProfile->id,
     ]);
 
-    // Authorized viewing of PHI by patient owner
-    $this->actingAs($patientUser)
+    // Authorized viewing of PHI by patient owner (single + index listings for both EHR and Appointments)
+    $this->actingAs($patientUser, 'web')
         ->getJson("/api/v1/medical-records/{$medicalRecord->id}")
         ->assertOk();
 
-    // Verify HIPAA audit trail entry recorded
+    $this->actingAs($patientUser, 'web')
+        ->getJson('/api/v1/medical-records')
+        ->assertOk();
+
+    $this->actingAs($patientUser, 'web')
+        ->getJson("/api/v1/appointments/{$appointment->id}")
+        ->assertOk();
+
+    $this->actingAs($patientUser, 'web')
+        ->getJson('/api/v1/appointments')
+        ->assertOk();
+
+    // Verify HIPAA audit trail entries recorded for every PHI read & listing endpoint
     $this->assertDatabaseHas('audit_logs', [
         'user_id' => $patientUser->id,
         'action' => 'medical_record.viewed_phi',
         'auditable_type' => MedicalRecord::class,
         'auditable_id' => $medicalRecord->id,
+    ]);
+
+    $this->assertDatabaseHas('audit_logs', [
+        'user_id' => $patientUser->id,
+        'action' => 'medical_record.listed_phi',
+        'auditable_type' => User::class,
+        'auditable_id' => $patientUser->id,
+    ]);
+
+    $this->assertDatabaseHas('audit_logs', [
+        'user_id' => $patientUser->id,
+        'action' => 'appointment.viewed_phi',
+        'auditable_type' => Appointment::class,
+        'auditable_id' => $appointment->id,
+    ]);
+
+    $this->assertDatabaseHas('audit_logs', [
+        'user_id' => $patientUser->id,
+        'action' => 'appointment.listed_phi',
+        'auditable_type' => User::class,
+        'auditable_id' => $patientUser->id,
     ]);
 
     // Audit logs access control verification

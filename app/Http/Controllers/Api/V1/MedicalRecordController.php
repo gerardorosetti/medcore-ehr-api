@@ -33,7 +33,7 @@ class MedicalRecordController extends Controller
      * @param  Request  $request  The incoming HTTP request.
      * @return AnonymousResourceCollection Paginated collection of MedicalRecord resources.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request, AuditLogService $auditLogService): AnonymousResourceCollection
     {
         $this->authorize('viewAny', MedicalRecord::class);
 
@@ -55,6 +55,18 @@ class MedicalRecordController extends Controller
 
         $perPage = $request->integer('per_page', 15);
         $records = $query->paginate($perPage > 0 ? $perPage : 15);
+
+        $auditLogService->log(
+            $user,
+            'medical_record.listed_phi',
+            $user,
+            [
+                'record_count' => $records->count(),
+                'record_ids' => $records->pluck('id')->all(),
+                'page' => $records->currentPage(),
+            ],
+            $request
+        );
 
         return MedicalRecordResource::collection($records);
     }

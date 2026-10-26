@@ -1,12 +1,12 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "gerardorosetti/medcore-ehr-api",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "description": "HIPAA-aligned Healthcare & Clinical Appointments REST API built with Laravel 13, PHP 8.5, PostgreSQL 16, and Redis 7.",
+    "keywords": ["laravel", "php85", "healthcare", "ehr", "hipaa", "telemedicine", "rest-api"],
     "license": "MIT",
     "require": {
-        "php": "^8.3",
+        "php": "^8.5",
         "dedoc/scramble": "^0.13.50",
         "laravel/framework": "^13.17",
         "laravel/sanctum": "^4.3",

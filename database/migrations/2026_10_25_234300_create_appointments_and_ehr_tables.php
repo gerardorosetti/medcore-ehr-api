@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -29,6 +30,10 @@ return new class extends Migration
             $table->index(['patient_profile_id', 'scheduled_at'], 'idx_patient_schedule');
         });
 
+        if (in_array(DB::getDriverName(), ['pgsql', 'sqlite'], true)) {
+            DB::statement("CREATE UNIQUE INDEX appointments_doctor_active_slot_unique ON appointments (doctor_profile_id, scheduled_at) WHERE status IN ('pending', 'confirmed')");
+        }
+
         Schema::create('medical_records', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->foreignUuid('appointment_id')->unique()->constrained('appointments')->cascadeOnDelete();
@@ -37,7 +42,7 @@ return new class extends Migration
             $table->text('diagnosis');
             $table->text('clinical_notes');
             $table->text('treatment_plan')->nullable();
-            $table->json('vital_signs')->nullable();
+            $table->text('vital_signs')->nullable();
             $table->timestamp('recorded_at');
             $table->timestamps();
         });
@@ -45,9 +50,9 @@ return new class extends Migration
         Schema::create('prescriptions', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->foreignUuid('medical_record_id')->constrained('medical_records')->cascadeOnDelete();
-            $table->string('medication_name', 150);
-            $table->string('dosage', 80);
-            $table->string('frequency', 100);
+            $table->text('medication_name');
+            $table->text('dosage');
+            $table->text('frequency');
             $table->unsignedSmallInteger('duration_days');
             $table->text('instructions')->nullable();
             $table->timestamps();
