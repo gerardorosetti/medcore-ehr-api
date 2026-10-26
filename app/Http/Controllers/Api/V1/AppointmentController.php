@@ -14,9 +14,11 @@ use App\Models\DoctorProfile;
 use App\Models\PatientProfile;
 use App\Models\User;
 use App\Services\AppointmentService;
+use App\Services\AuditLogService;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\ValidationException;
 
@@ -33,7 +35,7 @@ class AppointmentController extends Controller
     /**
      * Display a paginated listing of appointments scoped by user role.
      */
-    public function index(AppointmentQueryRequest $request): AnonymousResourceCollection
+    public function index(AppointmentQueryRequest $request, AuditLogService $auditLogService): AnonymousResourceCollection
     {
         $this->authorize('viewAny', Appointment::class);
 
@@ -79,6 +81,18 @@ class AppointmentController extends Controller
 
         $appointments = $query->with(['patientProfile.user', 'doctorProfile.user', 'medicalRecord'])
             ->paginate($perPage);
+
+        $auditLogService->log(
+            $user,
+            'appointment.listed_phi',
+            $user,
+            [
+                'appointment_count' => $appointments->count(),
+                'appointment_ids' => $appointments->pluck('id')->all(),
+                'page' => $appointments->currentPage(),
+            ],
+            $request
+        );
 
         return AppointmentResource::collection($appointments);
     }
@@ -129,13 +143,24 @@ class AppointmentController extends Controller
     }
 
     /**
-     * Display the specified appointment.
+     * Display the specified appointment and record a HIPAA PHI access audit event.
      */
-    public function show(Appointment $appointment): AppointmentResource
+    public function show(Request $request, Appointment $appointment, AuditLogService $auditLogService): AppointmentResource
     {
         $appointment->load(['patientProfile.user', 'doctorProfile.user', 'medicalRecord']);
 
         $this->authorize('view', $appointment);
+
+        $auditLogService->log(
+            $request->user(),
+            'appointment.viewed_phi',
+            $appointment,
+            [
+                'patient_profile_id' => $appointment->patient_profile_id,
+                'doctor_profile_id' => $appointment->doctor_profile_id,
+            ],
+            $request
+        );
 
         return new AppointmentResource($appointment);
     }
