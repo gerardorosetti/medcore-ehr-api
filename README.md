@@ -10,7 +10,7 @@
   <a href="https://laravel.com/docs/13.x"><img src="https://img.shields.io/badge/Laravel-13.x-FF2D20?style=for-the-badge&logo=laravel&logoColor=white" alt="Laravel 13" /></a>
   <a href="https://www.postgresql.org/docs/16/index.html"><img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL 16" /></a>
   <a href="https://redis.io/docs/latest/"><img src="https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis 7" /></a>
-  <a href="./tests"><img src="https://img.shields.io/badge/Pest_v5-33_Tests_Passing-9333EA?style=for-the-badge&logo=pest&logoColor=white" alt="Pest v5 (33 Tests Passing)" /></a>
+  <a href="./tests"><img src="https://img.shields.io/badge/Pest_v5-34_Tests_Passing-9333EA?style=for-the-badge&logo=pest&logoColor=white" alt="Pest v5 (34 Tests Passing)" /></a>
   <a href="./routes/api.php"><img src="https://img.shields.io/badge/OpenAPI-3.1-6BA539?style=for-the-badge&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.1" /></a>
   <a href="./SECURITY.md"><img src="https://img.shields.io/badge/Security-HIPAA%20%26%20OWASP%20API%20Top%2010-008080?style=for-the-badge&logo=shield&logoColor=white" alt="HIPAA & OWASP API Top 10" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License MIT" /></a>
@@ -160,7 +160,7 @@ Healthcare applications demand an aggressive **Defense-in-Depth** security archi
           'diagnosis'      => 'encrypted',
           'clinical_notes' => 'encrypted',
           'treatment_plan' => 'encrypted',
-          'vital_signs'    => 'array',
+          'vital_signs'    => 'encrypted:array',
           'recorded_at'    => 'datetime',
       ];
   }

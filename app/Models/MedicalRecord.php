@@ -67,7 +67,7 @@ class MedicalRecord extends Model
             'diagnosis' => 'encrypted',
             'clinical_notes' => 'encrypted',
             'treatment_plan' => 'encrypted',
-            'vital_signs' => 'array',
+            'vital_signs' => 'encrypted:array',
             'recorded_at' => 'datetime',
         ];
     }

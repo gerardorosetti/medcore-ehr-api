@@ -77,6 +77,9 @@ class Appointment extends Model
             'scheduled_at' => 'datetime',
             'ends_at' => 'datetime',
             'status' => AppointmentStatus::class,
+            'reason' => 'encrypted',
+            'notes' => 'encrypted',
+            'cancellation_reason' => 'encrypted',
         ];
     }
 

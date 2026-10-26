@@ -14,6 +14,7 @@ use App\Models\PatientProfile;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -64,22 +65,28 @@ readonly class AppointmentService
             $ipAddress,
             $userAgent
         ): Appointment {
-            // Acquire a pessimistic row lock on the DoctorProfile to prevent race conditions
-            /** @var DoctorProfile $lockedDoctor */
-            $lockedDoctor = DoctorProfile::query()
+            /** @var DoctorProfile $freshDoctor */
+            $freshDoctor = DoctorProfile::query()
                 ->whereKey($doctor->id)
-                ->lockForUpdate()
                 ->firstOrFail();
 
-            if (! $lockedDoctor->is_accepting_patients) {
+            if (! $freshDoctor->is_accepting_patients) {
                 throw ValidationException::withMessages([
                     'doctor_profile_id' => ['This doctor is not currently accepting new appointments.'],
                 ]);
             }
 
             $start = CarbonImmutable::instance($scheduledAt)->seconds(0);
-            $durationMinutes = $lockedDoctor->consultation_duration_minutes ?: 30;
+            $durationMinutes = $freshDoctor->consultation_duration_minutes ?: 30;
             $end = $start->addMinutes($durationMinutes);
+
+            // Acquire a fine-grained slot-level transactional advisory lock on PostgreSQL
+            // (keyed on doctor_id + date) so concurrent bookings for different dates never serialize each other.
+            if (DB::getDriverName() === 'pgsql') {
+                DB::statement('SELECT pg_advisory_xact_lock(hashtext(?))', [
+                    $doctor->id.':'.$start->toDateString(),
+                ]);
+            }
 
             // Verify active working schedule on the requested day of the week
             $hasActiveSchedule = DoctorSchedule::query()
@@ -96,7 +103,7 @@ readonly class AppointmentService
                 ]);
             }
 
-            // Check for overlapping active appointments for this doctor
+            // Check for overlapping active appointments for this doctor within the target window
             $hasConflict = Appointment::query()
                 ->where('doctor_profile_id', $doctor->id)
                 ->whereIn('status', [AppointmentStatus::Pending->value, AppointmentStatus::Confirmed->value])
@@ -114,15 +121,21 @@ readonly class AppointmentService
             $sanitizedReason = $this->sanitizeClinicalText($reason);
             $sanitizedNotes = $notes !== null ? $this->sanitizeClinicalText($notes) : null;
 
-            $appointment = Appointment::create([
-                'patient_profile_id' => $patient->id,
-                'doctor_profile_id' => $doctor->id,
-                'scheduled_at' => $start,
-                'ends_at' => $end,
-                'status' => AppointmentStatus::Confirmed,
-                'reason' => $sanitizedReason,
-                'notes' => $sanitizedNotes,
-            ]);
+            try {
+                $appointment = Appointment::create([
+                    'patient_profile_id' => $patient->id,
+                    'doctor_profile_id' => $doctor->id,
+                    'scheduled_at' => $start,
+                    'ends_at' => $end,
+                    'status' => AppointmentStatus::Confirmed,
+                    'reason' => $sanitizedReason,
+                    'notes' => $sanitizedNotes,
+                ]);
+            } catch (UniqueConstraintViolationException) {
+                throw ValidationException::withMessages([
+                    'scheduled_at' => ['The requested time slot is already booked for this doctor.'],
+                ]);
+            }
 
             AuditLog::create([
                 'action' => 'appointment.scheduled',
